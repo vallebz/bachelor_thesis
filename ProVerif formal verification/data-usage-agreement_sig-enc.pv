@@ -1,0 +1,341 @@
+(* This is a ProVerif description of the Protocol Flow from the Verifiable Consent Protocol. *)
+
+(* START keys *)
+type SecretKey.
+type PublicKey.
+type SymmetricKey.
+fun pk(SecretKey):PublicKey.
+(* END keys *)
+
+(* START group *)
+type G.
+type exponent.
+fun exp(G, exponent): G.
+fun g(exponent): G.
+equation forall x: exponent, y: exponent; exp(g(x),y) = exp(g(y),x).
+fun GtoSymK(G): SymmetricKey.
+fun bitG(G):bitstring.
+reduc forall elem:G; unbitG(bitG(elem))=elem.
+(* END group *)
+
+(* START symmetric encryption *)
+fun enc(bitstring(*the message*), SymmetricKey):bitstring (*symmetric encrypt input msg*).
+reduc forall msg:bitstring,symk:SymmetricKey; dec(enc(msg,symk),symk)=msg (*symmetric decrypt*).
+(* END symmetric encryption *)
+
+(* START digital signature *)
+fun sig(bitstring(*the message*), SecretKey):bitstring(*the signature value*).
+reduc forall msg:bitstring,sk:SecretKey; check(msg,sig(msg,sk),pk(sk))=true (*check(msg,sigVal,pk)*).
+(* END digital signature *)
+
+(* DEFS *)
+
+(* Communication *)
+free h:channel.
+free m_uri:bitstring.
+free m_R_offer:bitstring.
+free m_VP_request:bitstring.
+free m_shape:bitstring.
+
+fun ch(bitstring): channel.
+free resource_is_private: bitstring [private].
+
+(* Protocol Completes / Sanity checks *)
+free Client_completes:bitstring [private].
+free Server_completes:bitstring [private].
+
+(* Sharing Events *)
+event Client_received_resource(SecretKey, bitstring (* sk proves identity, m_resource *)).
+event Server_provided_resource(SecretKey, bitstring (* sk proves identity, m_resource *)).
+event Client_provided_credential(SecretKey, bitstring (* sk proves identity, m_presentation *)).
+event Server_received_credential(SecretKey, bitstring (* sk proves identity, m_presentation *)).
+
+(* Agreement Events *)
+event Server_has_agreed(SecretKey, bitstring, bitstring (* sk_s, m_R_agreement, m_VP_agreement *)).
+event Client_has_agreed(SecretKey, bitstring, bitstring (* sk_c, m_R_agreement, m_VP_requirement *)).
+event Server_has_offered(SecretKey, bitstring, bitstring, bitstring (* sk_s, m_shape, m_R_offer, m_VP_request *)).
+
+(* Non-Repudiation Events *)
+event Client_can_prove_server_has_offered(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring (* m_shape, sig_shape, m_R_offer, sig_R_offer, m_VP_request, sig_VP_request *)).
+event Client_can_prove_client_has_agreed(bitstring, bitstring, bitstring, bitstring (* m_R_agreement, sig_R_agreement_client, m_VP_agreement, sig_VP_agreement *)).
+event Client_can_prove_server_has_agreed(bitstring, bitstring, bitstring, bitstring (* m_R_agreement, sig_R_agreement_server, m_VP_agreement, sig_VP_agreement *)).
+event Server_can_prove_server_has_offered(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring (* m_shape, sig_shape, m_R_offer, sig_R_offer, m_VP_request, sig_VP_request *)).
+event Server_can_prove_client_has_agreed(bitstring, bitstring, bitstring, bitstring (* m_R_agreement, sig_R_agreement_client, m_VP_requirement, sig_VP_requirement *)).
+event Server_can_prove_server_has_agreed(bitstring, bitstring, bitstring, bitstring (* m_R_agreement, sig_R_agreement_server, m_VP_agreement, sig_VP_agreement *)).
+
+
+
+(* START process macros ~ agent *)
+
+(** START Client **)
+let client(sk_c:SecretKey, pk_s:PublicKey, talksOnlyToHonest:bool) (* input ~ what the agent starts with in private*) =
+
+    new x:exponent;
+    let gx = g(x) in
+    let m'_0 = bitG(gx) in
+    let m_0 = m'_0 in
+    out(h, m_0);
+    (* Sent out Handshake-Request *)
+
+
+    (* Receive Handshake-Response *)
+    in(h,m_1:bitstring);
+    let (eGY:bitstring,m:bitstring) = m_1 in
+    let gy = unbitG(eGY) in
+    let K = GtoSymK(exp(gy,x)) in
+    let s_K = dec(m,K) in
+    if check((gy,gx), s_K, pk_s) then 
+    let m'_2 = (sig((gx,gy), sk_c), m_uri) in
+    let m_2 = enc(m'_2, K) in
+    out(h,m_2);
+    (* Sent out data request (enc) *)
+
+
+    (* Receive data usage offer (enc) *)
+    in(h,m_3:bitstring);
+    (* a. decrypt *)
+    let m'_3 = dec(m_3,K) in
+    (* b. deconstruct *)
+    let (
+        m'_uri:bitstring, 
+        sig_shape:bitstring, 
+        sig_R_offer:bitstring,
+        sig_VP_request:bitstring
+        ) = m'_3 in
+    (* c. check signatures *)
+    if check(m_shape, sig_shape, pk_s) then
+    if check(m_R_offer, sig_R_offer, pk_s) then
+    if check(m_VP_request, sig_VP_request, pk_s) then
+    (* d. check content *)
+    if m'_uri = m_uri then
+    (* e. create new message content *)
+    let m_presentation:bitstring = m_shape in
+    let m_R_agreement:bitstring = m_R_offer in
+    let m_VP_requirement:bitstring = m_VP_request in
+    (* f. sign files *)
+    let sig_presentation:bitstring = sig(m_presentation, sk_c) in
+    let sig_R_agreement_client:bitstring = sig(m_R_agreement, sk_c) in
+    let sig_VP_requirement:bitstring = sig(m_VP_requirement, sk_c) in
+    (* g. encrypt *)
+    let m_4:bitstring = enc((m_uri, m_presentation, sig_presentation, m_R_agreement, sig_R_agreement_client, m_VP_requirement, sig_VP_requirement), K) in
+    (* h. send new message *)
+    event Client_has_agreed(sk_c, m_R_agreement, m_VP_requirement);
+    out(h,m_4);
+    (* Sent out Presentation and Policies *)
+
+
+    (* Client receives Resource and Agreements *)
+    in(h,m_5:bitstring);
+    (* a. decrypt *)
+    let m'_5 = dec(m_5,K) in
+    (* b. deconstruct *)
+    let (
+        m_resource:bitstring, 
+        m_VP_agreement:bitstring,
+        sig_VP_agreement:bitstring,
+        m'_R_agreement:bitstring,
+        sig'_Ragreement_client:bitstring,
+        sig_R_agreement_server:bitstring
+        ) = m'_5 in
+    (* c. check signatures *)
+    if check(m_VP_agreement, sig_VP_agreement, pk_s) then
+    if check(m'_R_agreement, sig_R_agreement_server, pk_s) then
+    (* d. check content *)
+    if m_VP_agreement = m_VP_requirement then
+    if m'_R_agreement = m_R_agreement then
+    if sig'_Ragreement_client = sig_R_agreement_server then
+    (* End of data sharing *)
+
+    (* Client about to complete protocol! *)
+    out(h, Client_completes);
+    if talksOnlyToHonest then
+    out(ch(m_resource),resource_is_private) |
+    (* Events at the end of the protocol *)    
+    event Client_provided_credential(sk_c, m_presentation) |
+    event Client_received_resource(sk_c, m_resource) |
+    event Client_can_prove_server_has_offered(m_shape, sig_shape, m_R_offer, sig_R_offer, m_VP_request, sig_VP_request) |
+    event Client_can_prove_server_has_agreed(m_R_agreement, sig_R_agreement_server, m_VP_agreement, sig_VP_agreement ) |
+    event Client_can_prove_client_has_agreed(m_R_agreement, sig_R_agreement_client, m_VP_agreement, sig_VP_agreement);
+    0.
+(** END Client **)
+
+(** START Server **)
+let server(sk_s:SecretKey, pk_c:PublicKey, talksOnlyToHonest:bool) (* input ~ what the agent starts with in private*) =
+
+    (* Receive Handshake-Request *)
+    in(h, m_0:bitstring);
+    let gx= unbitG(m_0) in
+    new y:exponent;
+    let gy = g(y) in
+    let K = GtoSymK(exp(gx,y)) in
+    let m'_1 = sig((gy,gx),sk_s) in
+    let m_1 = (bitG(gy),enc(m'_1, K)) in
+    out(h,m_1); 
+    (* Sent out Handshake-Response *)
+
+
+    (* Receive data request *)
+    in(h,m_2:bitstring);
+    (* ab. decrypt deconstruct *)
+    let (
+        sig_K:bitstring, 
+        m'_uri:bitstring
+        ) = dec(m_2,K) in
+    (* out-of-band - check if public *)
+    (* c. check signatures *)
+    if check((gx,gy),sig_K,pk_c) then
+    (* d. check content *)
+    if m'_uri = m_uri then
+    (* e. create new message content *)
+    (* f. sign message content *)
+    let sig_shape:bitstring = sig(m_shape, sk_s) in
+    let sig_R_offer:bitstring = sig(m_R_offer, sk_s) in
+    let sig_VP_request:bitstring = sig(m_VP_request, sk_s) in
+    (* g. encrypt *)
+    let m_3:bitstring = enc((m_uri, m_shape, sig_shape, m_R_offer, sig_R_offer, m_VP_request, sig_VP_request), K) in
+    (* h. send new message *)
+    event Server_has_offered(sk_s, m_shape, m_R_offer, m_VP_request);
+    out(h, m_3);
+    (* Sent out data usage offer  *)
+
+
+    (* Receive Presentation and Policies *)
+    in(h,m_4:bitstring);
+    (* a. decyrpt *)
+    let m'_4 = dec(m_4, K) in
+    (* b. deconstruct *)
+    let (
+        m''_uri:bitstring, 
+        m_presentation:bitstring, 
+        sig_presentation:bitstring,
+        m_R_agreement:bitstring,
+        sig_R_agreement_client:bitstring,
+        m_VP_requirement:bitstring,
+        sig_VP_requirement:bitstring
+        ) = m'_4 in
+    (* c. check signatures *)
+    if check(m_presentation, sig_presentation, pk_c) then
+    if check(m_R_agreement, sig_R_agreement_client, pk_c) then
+    if check(m_VP_requirement, sig_VP_requirement, pk_c) then
+    (* d. check content *)
+    if m''_uri = m_uri then
+    if m_R_agreement = m_R_offer then
+    if m_VP_requirement = m_VP_request then
+    if m_presentation = m_shape then
+    (* e. create new message content *)
+    new m_resource:bitstring;
+    let m_VP_agreement:bitstring = m_VP_requirement in
+    (* f. sign message content *)
+    let sig_VP_agreement = sig(m_VP_agreement, sk_s) in
+    let sig_R_agreement_server = sig((m_R_agreement, sig_R_agreement_client), sk_s) in
+    (* g. encyrpt *)
+    let m_5:bitstring = enc((m_resource, m_VP_agreement, sig_VP_agreement, m_R_agreement, sig_R_agreement_client, sig_R_agreement_server), K) in
+    (* h. send new message *)
+    event Server_has_agreed(sk_s, m_R_agreement, m_VP_agreement) |
+    out (h,m_5);
+    (* Sent out Resource and Rgreements *)
+
+
+    (* Server about to complete the protocol *)
+    out(h, Server_completes);
+    if talksOnlyToHonest then
+    out(ch(m_resource),resource_is_private) |
+    (* Events at the end of the protocol *)
+    event Server_received_credential(sk_s, m_presentation) |
+    event Server_provided_resource(sk_s, m_resource) |
+    event Server_can_prove_server_has_offered(m_shape, sig_shape, m_R_offer, sig_R_offer, m_VP_request, sig_VP_request) |
+    event Server_can_prove_client_has_agreed(m_R_agreement, sig_R_agreement_client, m_VP_requirement, sig_VP_requirement) |
+    event Server_can_prove_server_has_agreed(m_R_agreement, sig_R_agreement_server, m_VP_agreement, sig_VP_agreement);
+    0.
+(** END Server **)
+
+(* END process macros *)
+
+(* "Do the processes complete?" - sanity check*)
+query attacker(Client_completes).
+query attacker(Server_completes).
+
+(* checking for secrecy *)
+query attacker(resource_is_private).
+
+
+(* Checking for non-repudiation *)
+
+query sk_s:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring;
+    inj-event(Client_can_prove_server_has_agreed(policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Server_has_agreed(sk_s, policyR, policyVP))
+    .
+
+query sk_c:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring;
+    inj-event(Server_can_prove_client_has_agreed(policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Client_has_agreed(sk_c, policyR, policyVP))
+    .
+
+query sk_s:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring, credential:bitstring, sig_credential:bitstring;
+    inj-event(Client_can_prove_server_has_offered(credential, sig_credential, policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Server_has_offered(sk_s, credential, policyR, policyVP))
+    .
+
+query sk_s:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring, credential:bitstring, sig_credential:bitstring;
+    inj-event(Server_can_prove_server_has_offered(credential, sig_credential, policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Server_has_offered(sk_s, credential, policyR, policyVP))
+    .
+
+query sk_s:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring;
+    inj-event(Server_can_prove_server_has_agreed(policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Server_has_agreed(sk_s, policyR, policyVP))
+    .
+
+query sk_c:SecretKey, policyVP:bitstring, policyR:bitstring, sig_policyR:bitstring, sig_policyVP:bitstring;
+    inj-event(Client_can_prove_client_has_agreed(policyR, sig_policyR, policyVP, sig_policyVP))
+    ==> 
+    inj-event(Client_has_agreed(sk_c, policyR, policyVP))
+    .
+
+
+(* checking for reliability *)
+query sk_c:SecretKey, sk_s:SecretKey, credential:bitstring, policyR:bitstring, policyVP:bitstring, resource:bitstring;
+    inj-event(Client_received_resource(sk_c, resource))
+    ==>
+        ( inj-event(Server_provided_resource(sk_s, resource))
+        ==>
+            ( inj-event(Server_received_credential(sk_s, credential))
+            ==>
+                ( inj-event(Client_provided_credential(sk_c, credential))
+                ==>
+                    ( inj-event(Server_has_agreed(sk_s, policyR, policyVP))
+                    ==>
+                        ( inj-event(Client_has_agreed(sk_c, policyR, policyVP))
+                        ==>
+                        inj-event(Server_has_offered(sk_s, credential, policyR, policyVP))
+                        )
+                    )
+                )
+            )
+        )
+    . 
+
+
+(* MAIN *)
+
+free sk_e:SecretKey.
+free sk_c:SecretKey [private].
+free sk_s:SecretKey [private].
+
+process (*use root process for setup *) 
+    (* advertise public keys *)
+    out(h,pk(sk_c));
+    out(h,pk(sk_s));
+    (* let agents dance *)
+    ( (
+         !client   (sk_c, pk(sk_s), true)
+       | !client   (sk_c, pk(sk_e), false)
+       | !server   (sk_s, pk(sk_c), true)
+       | !server   (sk_s, pk(sk_e), false)
+       (* dishonest clients and dishonest servers are impersonated by "the attacker" *)
+    ) )
